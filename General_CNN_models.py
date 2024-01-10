@@ -11,6 +11,16 @@ class LeNet():
         self.Y =[]
         self.cost = 0.0
         self.batchSize = 4
+        self.learn_rate = 0.0001
+        self.classes = 10
+        
+        # feat map conbination 6x16
+        self.FTtable = np.array([[1,0,0,0,1,1,1,0,0,1,1,1,1,0,1,1],
+                                [1,1,0,0,0,1,1,1,1,0,1,1,1,1,0,1],
+                                [1,1,1,0,0,0,1,1,1,0,0,1,0,1,1,1],
+                                [0,1,1,1,0,0,1,1,1,1,1,0,1,0,1,1],
+                                [0,0,1,1,1,0,0,1,1,1,1,0,1,1,0,1],
+                                [0,0,0,1,1,1,0,0,1,1,1,1,0,1,1,1]])
         
         # CNN Kernerl
         self.W_6x5x5= np.random.randn(6,5,5)
@@ -20,7 +30,6 @@ class LeNet():
         self.W_nx120= np.random.randn(5*5*16, 120)
         self.W_120x84= np.random.randn(120, 84)
         self.W_84xn= np.random.randn(84, out_feats)
-
     
     def CNN_features_layer(self, x):
 
@@ -77,7 +86,7 @@ class LeNet():
                     for col in range(w_pad):
                         
                         # padding part is all equal to 0
-                        if row < padding or row > h or col < padding or col > w : continue
+                        if row < padding or row >= h or col < padding or col >= w : continue
                         
                         # otherwise, keep same
                         data_pad[b, c, row, col] = data[b, c, row, col]
@@ -125,40 +134,158 @@ class LeNet():
         out_h = np.uint16((data_h - k_h + 2*padding) / stride) + 1
         out_w = np.uint16((data_w - k_w + 2*padding) / stride) + 1
         
-        conv_mat = np.zeros((data_batch, data_chs*k_chs, out_h, out_w))
-        offX = k_w//2
-        offY = k_h//2
+        # outputs
+        conv_mat = np.zeros((data_batch, k_chs, out_h, out_w))
         
         for b in range(data_batch):
-            for c in range(data_chs*k_chs):
-                
-                for row in range(out_h):
-                    for col in range(out_w):
-                        
-                        acc = 0.0
-                        # accumlate all the element-wise multiple
-                        for x in range(k_w):
-                            for y in range(k_h):
-                                data_col = col+x-offX
-                                data_row = row+y-offY
-                                # skip index out of bounds
-                                if data_col < 0 or data_col >= out_w or data_row <0 or data_row > out_h: continue
-                                
-                                acc+= (data_pad[b, c//k_chs,data_row, data_col]*kernel[c//data_chs,x,y])
-
-                        conv_mat[b, c, row, col] = acc
+            for k_c in range(k_chs):
+                for c in range(data_chs):
+                    
+                    if data_chs!=1 and self.FTtable[c, k_c] ==0:continue
+                    
+                    for row in range(out_h):
+                        for col in range(out_w):
+                            # accumlate all the element-wise multiple
+                            for x in range(k_w):
+                                for y in range(k_h):
+                                    data_row = row+y-(k_h//2)
+                                    data_col = col+x-(k_w//2)
+                                    # skip index out of bounds
+                                    if data_col < 0 or data_col >= out_w or data_row <0 or data_row > out_h: continue
+                                    conv_mat[b, k_c, row, col]+= (data_pad[b,c,data_row,data_col]*kernel[k_c,x,y])
         
         return conv_mat
-                                     
+    
+    # Convolve of BackPropagation
+    def conv_bp(self, feats_data, det_data, kernel, stride, padding):
+        
+        ft_b, ft_chs, ft_h, ft_w = np.shape(feats_data)
+        dt_b, dt_chs, dt_h, dt_w = np.shape(det_data)
+        k_chs, k_h, k_w = np.shape(kernel)
+        
+        # padding data
+        padding = ((ft_h +1)*stride+k_h -dt_h)//2
+        dt_pad = self.paddingData(det_data, padding)
+        dt_pad_h = dt_h+padding*2
+        dt_pad_w = dt_w+padding*2
+
+        # outputs
+        det_W = np.zeros(np.shape(kernel))
+        det_feats = np.zeros(np.shape(feats_data))
+        
+        # solve det feats
+        for b in range(ft_b):
+            for c in range(ft_chs):
+                for k_c in range(k_chs):
+                    
+                    # check table: it is not accumlative if it is 0
+                    if ft_chs!=1 and self.FTtable[c, k_c]==0:continue
+                    
+                    # convolve2D
+                    for ft_row in range(ft_h):
+                        for ft_col in range(ft_w):
+                            
+                            # sovle det feat
+                            for x in range(k_w):
+                                for y in range(k_h):
+                                    dt_row = ft_row+y - (k_h//2)
+                                    dt_col = ft_col+x - (k_w//2)
+                                    if dt_row<0 or dt_row>=dt_pad_h or dt_col<0 or dt_col>=dt_pad_w:continue
+                                    det_feats[b,c,ft_row,ft_col] += dt_pad[b,c,dt_row,dt_col]*kernel[k_c,x,y]
+                            
+                    # solve det W
+                    for k_row in range(k_h):
+                        for k_col in range(k_w):
+                            for x in range(dt_w):
+                                for y in range(dt_h):
+                                    ft_row = k_row+y - (dt_h//2)
+                                    ft_col = k_col+x - (dt_w//2)
+                                    if ft_row<0 or ft_row>=ft_h or ft_col<0 or ft_col>=ft_w:continue
+                                    det_W[k_c,k_row,k_col] += det_feats[b,c,ft_row,ft_col]*det_data[b,c,x,y]
+
+        return det_feats, det_W    
+                
     def train(self, x_train, y_train):
 
-        # forward
-        features = self.CNN_features_layer(x_train)
-        # flatten features into series
-        features_flatten = np.reshape(features, (self.batchSize, 5*5*16))
-        y_predict = self.FC_classifier_layer(features_flatten)
+        #################### forward
+        # W1
+        a1 = self.conv(data=x_train, kernel=self.W_6x5x5, stride=1, padding=0)
+        avgp1 = self.avgPool(data=a1, kernelSize=2, stride=2)
         
-              
+        # W2
+        avgp1 = np.mean(avgp1, axis=1, keepdims=1)
+        a2 = self.conv(data=avgp1, kernel=self.W_16x5x5, stride=1, padding=0)
+        avgp2 = self.avgPool(data=a2, kernelSize=2, stride=2)
+        
+        # flatten features into series
+        features_flatten = np.reshape(avgp2, (self.batchSize, 5*5*16))
+
+        # FC3
+        a3 = np.dot(features_flatten, self.W_nx120)
+        sig3 = self.reLU(a3)
+        
+        # FC4
+        a4 = np.dot(sig3, self.W_120x84) 
+        sig4 = self.reLU(a4)
+        
+        # FC5
+        a5 = np.dot(sig4, self.W_84xn)
+        
+        # Softmax
+        y_predict = np.argmax(self.softmax(a5),axis=1)
+        
+        # cost
+        self.cost =(1/self.batchSize)*np.sum(-y_train*np.log(y_predict+1e-10))
+        print("Cost: %.4f" %(self.cost))
+        ##################### back propagation
+        
+        # init Y
+        Y = np.zeros((self.batchSize, self.classes))
+        for b in range(self.batchSize):
+            Y[b, y_train[b]] = 1.0
+            
+        y_softmax_out = self.softmax(a5)
+        
+        ############## Updates weights of fully connected layer
+        # F5 dW_84xN
+        det_l = y_softmax_out - Y
+        dW_84xn = np.dot(np.transpose(det_l), (sig4))
+        self.W_84xn -= np.transpose(dW_84xn) * self.learn_rate
+        
+        # F4 dW_120x84
+        det_l = np.dot(self.W_84xn, np.transpose(det_l))*np.transpose(sig4)
+        dW_120x84 = np.dot(det_l, sig3)
+        self.W_120x84 -= np.transpose(dW_120x84) * self.learn_rate
+        
+        # F3 dW_nx120
+        avgp2_reshape = np.reshape(avgp2, (self.batchSize, 5*5*16))
+        det_l = np.dot(self.W_120x84, det_l)*np.transpose(sig3)
+        dW_nx120 = np.dot(det_l, avgp2_reshape)
+        self.W_nx120 -= np.transpose(dW_nx120) * self.learn_rate
+        
+        ############## Updates weights of features layer
+        # W2 dW_16x5x5 
+        # delt_avgp2
+        det_l = np.dot(self.W_nx120, det_l)*np.transpose(avgp2_reshape)
+        # bp_avgpooling -> a2
+        det_avgp2 = np.reshape(det_l, (self.batchSize, 16,5,5))
+        det_avgp2 = np.repeat(det_avgp2,2, axis=2)
+        det_a2 = np.repeat(det_avgp2,2, axis=3)
+        # bp_conv -> avgp1
+        det_l, dw_16x5x5 = self.conv_bp(feats_data=avgp1, det_data=det_a2, kernel=self.W_16x5x5,stride=1,padding=0)
+        self.W_16x5x5 -= dw_16x5x5*self.learn_rate
+        # bp_avgpooling -> a1
+        det_avgp1 = np.repeat(det_l,2, axis=2)
+        det_a1 = np.repeat(det_avgp1,2, axis=3)
+        # bp_cov -> W1 dW_6x5x5
+        det_l, dw_6x5x5 = self.conv_bp(feats_data=x_train, det_data=det_a1, kernel=self.W_6x5x5, stride=1,padding=0)
+        # W1 dW_6x5x5
+        self.W_6x5x5 -= dw_6x5x5
+        
+        print("trained a batch")
+    
+        
+        
     def predict(self, x):
         features = self.CNN_features_layer(x)
         # flatten features into series

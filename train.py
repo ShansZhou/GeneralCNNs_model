@@ -18,7 +18,7 @@ myLeNet = gcnn.LeNet(numOfclasses)
 
 
 # train
-epoch = 100
+epoch = 10
 batchsize = 4
 
 
@@ -32,7 +32,8 @@ for i in range(epoch):
         
         myLeNet.train(X, Y)
         
-        predictions = myLeNet.predict(X, Y)
+        predictions = myLeNet.predict(X)
+        print(predictions)
         
         correct += np.sum(predictions==Y)
         
