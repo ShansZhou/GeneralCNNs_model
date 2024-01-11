@@ -11,7 +11,7 @@ class LeNet():
         self.Y =[]
         self.cost = 0.0
         self.batchSize = 4
-        self.learn_rate = 0.0001
+        self.learn_rate = 0.001
         self.classes = 10
         
         # feat map conbination 6x16
@@ -23,13 +23,13 @@ class LeNet():
                                 [0,0,0,1,1,1,0,0,1,1,1,1,0,1,1,1]])
         
         # CNN Kernerl
-        self.W_6x5x5= np.random.randn(6,5,5)
-        self.W_16x5x5= np.random.randn(16,5,5)
+        self.W_6x5x5= self.xavierInit(c_in=1,c_out=6,h=5,w=5)
+        self.W_16x5x5= self.xavierInit(c_in=6,c_out=16,h=5,w=5)
         
         # FC kernerl
-        self.W_nx120= np.random.randn(5*5*16, 120)
-        self.W_120x84= np.random.randn(120, 84)
-        self.W_84xn= np.random.randn(84, out_feats)
+        self.W_nx120= self.xavierInit(c_in=5*5*16,c_out=120,h=1,w=1, fc=True)
+        self.W_120x84= self.xavierInit(c_in=120,c_out=84,h=1,w=1, fc=True) 
+        self.W_84xn= self.xavierInit(c_in=84,c_out=out_feats,h=1,w=1, fc=True)
     
     def CNN_features_layer(self, x):
 
@@ -40,7 +40,7 @@ class LeNet():
         
         # CNN layer2: Kernel=[B,5,5]  stride=1
         feats2 = self.conv(data=feats1_avg, kernel=self.W_16x5x5, stride=1, padding=0)
-        feats2 = feats2[:,0:16,:,:]
+        
         # Average pooling: f=2, stride=2
         feats2_avg = self.avgPool(data=feats2, kernelSize=2, stride=2)
         
@@ -61,12 +61,26 @@ class LeNet():
         output = np.dot(fc2_relu, self.W_84xn)
         
         return self.softmax(output)
+    
+    # Xavier initial
+    def xavierInit(self, c_in, c_out, h, w, fc=False):
+        fan_1 = c_out * w * h
+        fan_2 = c_in * w * h
+        ratio = np.sqrt(6.0 / (fan_1 + fan_2))
+        if fc == True:
+            params = ratio * (2*np.random.random((c_in, c_out, w, h)) - 1)
+            params = params.reshape(c_in, c_out)
+        else:
+            params = ratio * (2*np.random.random((c_out, w, h)) - 1)
+            
+        return params
         
     def reLU(self, x):
         return np.where(x>0,x,0)
             
     def softmax(self, x):
-        e_x = np.exp(x-np.expand_dims(np.max(x, axis=1),1))
+        x_max = np.expand_dims(np.max(x, axis=1),1)
+        e_x = np.exp(x-x_max)
         return e_x / np.sum(e_x, axis=0)
     
     # padding part is 0
@@ -99,7 +113,8 @@ class LeNet():
         k_h, k_w = kernelSize, kernelSize
         out_h = np.uint16((data_h - k_h) / stride) + 1
         out_w = np.uint16((data_w - k_w) / stride) + 1
-        
+        scalar_h = out_h/data_h
+        scalar_w = out_w/data_w
         avgPool_mat = np.zeros((data_batch, data_chs, out_h, out_w), np.float32)
         offX = k_w//2
         offY = k_h//2
@@ -107,8 +122,8 @@ class LeNet():
         for b in range(data_batch):
             for chs in range(data_chs):
                 
-                for row in range(out_h):
-                    for col in range(out_w):
+                for row in range(data_h):
+                    for col in range(data_w):
                         acc = 0.0
                         # accumlate all the element in data within Kernerl
                         for x in range(k_h):
@@ -116,10 +131,11 @@ class LeNet():
                                 data_col = col+x-offX
                                 data_row = row+y-offY
                                 # skip index out of bounds
-                                if data_col < 0 or data_col >= out_w or data_row <0 or data_row > out_h: continue
+                                if data_col < 0 or data_col >= data_w or data_row <0 or data_row >= data_h: continue
                                 acc+= data[b, chs, data_row, data_col]
-
-                        avgPool_mat[b,chs,row,col] = acc / (k_h*k_w)
+                        scaledRow = np.int16(row*scalar_h)
+                        scaledCol = np.int16(col*scalar_w)
+                        avgPool_mat[b,chs,scaledRow,scaledCol] = acc / (k_h*k_w)
             
         return avgPool_mat
         
@@ -213,7 +229,6 @@ class LeNet():
         avgp1 = self.avgPool(data=a1, kernelSize=2, stride=2)
         
         # W2
-        avgp1 = np.mean(avgp1, axis=1, keepdims=1)
         a2 = self.conv(data=avgp1, kernel=self.W_16x5x5, stride=1, padding=0)
         avgp2 = self.avgPool(data=a2, kernelSize=2, stride=2)
         
@@ -235,7 +250,8 @@ class LeNet():
         y_predict = np.argmax(self.softmax(a5),axis=1)
         
         # cost
-        self.cost =(1/self.batchSize)*np.sum(-y_train*np.log(y_predict+1e-10))
+        probs = [self.softmax(a5)[i][y_predict[i]] for i in range(self.batchSize)]
+        self.cost = - (1/self.batchSize)*np.sum(np.log(probs))
         print("Cost: %.4f" %(self.cost))
         ##################### back propagation
         
