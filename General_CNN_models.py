@@ -1,5 +1,5 @@
 import numpy as np
-
+import time
 import os
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
@@ -11,7 +11,7 @@ class LeNet():
         self.Y =[]
         self.cost = 0.0
         self.batchSize = 4
-        self.learn_rate = 0.001
+        self.learn_rate = 1e-3
         self.classes = 10
         
         # feat map conbination 6x16
@@ -223,6 +223,7 @@ class LeNet():
                 
     def train(self, x_train, y_train):
 
+        t_0 = time.perf_counter()
         #################### forward
         # W1
         a1 = self.conv(data=x_train, kernel=self.W_6x5x5, stride=1, padding=0)
@@ -252,7 +253,9 @@ class LeNet():
         # cost
         probs = [self.softmax(a5)[i][y_predict[i]] for i in range(self.batchSize)]
         self.cost = - (1/self.batchSize)*np.sum(np.log(probs))
-        print("Cost: %.4f" %(self.cost))
+        
+        t_1 = time.perf_counter()
+        # print("time elapsed: %.3fs, Cost: %.4f" %(t_1-t_0, self.cost))
         ##################### back propagation
         
         # init Y
@@ -264,50 +267,60 @@ class LeNet():
         
         ############## Updates weights of fully connected layer
         # F5 dW_84xN
-        det_l = y_softmax_out - Y
-        dW_84xn = np.dot(np.transpose(det_l), (sig4))
-        self.W_84xn -= np.transpose(dW_84xn) * self.learn_rate
+        det_a5 = y_softmax_out - Y
+        dW_84xn = np.dot(np.transpose(sig4), det_a5)
         
         # F4 dW_120x84
-        det_l = np.dot(self.W_84xn, np.transpose(det_l))*np.transpose(sig4)
-        dW_120x84 = np.dot(det_l, sig3)
-        self.W_120x84 -= np.transpose(dW_120x84) * self.learn_rate
+        det_a4 = np.dot(det_a5, np.transpose(self.W_84xn))*(sig4*(1-sig4))
+        dW_120x84 = np.dot(np.transpose(sig3), det_a4)   
         
         # F3 dW_nx120
         avgp2_reshape = np.reshape(avgp2, (self.batchSize, 5*5*16))
-        det_l = np.dot(self.W_120x84, det_l)*np.transpose(sig3)
-        dW_nx120 = np.dot(det_l, avgp2_reshape)
-        self.W_nx120 -= np.transpose(dW_nx120) * self.learn_rate
+        det_a3 = np.dot(det_a4, np.transpose(self.W_120x84))*(sig3*(1-sig3))
+        dW_nx120 = np.dot(np.transpose(avgp2_reshape), det_a3)
         
         ############## Updates weights of features layer
         # W2 dW_16x5x5 
         # delt_avgp2
-        det_l = np.dot(self.W_nx120, det_l)*np.transpose(avgp2_reshape)
+        det_avgp2 = np.dot(det_a3, np.transpose(self.W_nx120))
         # bp_avgpooling -> a2
-        det_avgp2 = np.reshape(det_l, (self.batchSize, 16,5,5))
+        det_avgp2 = np.reshape(det_avgp2, (self.batchSize, 16,5,5))
         det_avgp2 = np.repeat(det_avgp2,2, axis=2)
         det_a2 = np.repeat(det_avgp2,2, axis=3)
         # bp_conv -> avgp1
         det_l, dw_16x5x5 = self.conv_bp(feats_data=avgp1, det_data=det_a2, kernel=self.W_16x5x5,stride=1,padding=0)
-        self.W_16x5x5 -= dw_16x5x5*self.learn_rate
         # bp_avgpooling -> a1
         det_avgp1 = np.repeat(det_l,2, axis=2)
         det_a1 = np.repeat(det_avgp1,2, axis=3)
         # bp_cov -> W1 dW_6x5x5
         det_l, dw_6x5x5 = self.conv_bp(feats_data=x_train, det_data=det_a1, kernel=self.W_6x5x5, stride=1,padding=0)
-        # W1 dW_6x5x5
-        self.W_6x5x5 -= dw_6x5x5
+
+        # updates weights
+        self.W_84xn += dW_84xn * self.learn_rate
+        self.W_120x84 += dW_120x84 * self.learn_rate
+        self.W_nx120 += dW_nx120 * self.learn_rate
+        self.W_16x5x5 += dw_16x5x5 *self.learn_rate
+        self.W_6x5x5 += dw_6x5x5 *self.learn_rate
         
-        print("trained a batch")
+        t_2 = time.perf_counter()
+        print("training time-> %.3fs, cost: %f" %(t_2 - t_0, self.cost))
     
         
         
     def predict(self, x):
+        # t_0 = time.perf_counter()
+        
         features = self.CNN_features_layer(x)
         # flatten features into series
         features_flatten = np.reshape(features, (self.batchSize, 5*5*16))
         y_predict = self.FC_classifier_layer(features_flatten)
         y_labels = np.argmax(y_predict, axis=1)
+        
+        # t_1 = time.perf_counter()
+        # # cost
+        # probs = [y_predict[i][y_labels[i]] for i in range(self.batchSize)]
+        # cost_test = - (1/self.batchSize)*np.sum(np.log(probs))
+        # print("predictn time-> %.3fs, cost: %f" %(t_1 - t_0, cost_test))
         
         return y_labels
         
